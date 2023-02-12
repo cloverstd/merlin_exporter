@@ -1,16 +1,16 @@
 package merlin_client
 
 import (
+	"bytes"
 	"context"
 	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
-	"regexp"
 	"strconv"
+	"strings"
+	"time"
 )
-
-var uptimePattern = regexp.MustCompile("\\((\\d+) secs since boot\\)")
 
 type DeviceMap struct {
 	Sys string `xml:"sys"`
@@ -21,12 +21,11 @@ func (mc *MerlinClient) Uptime(ctx context.Context) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	resp, err := mc.do(ctx, req)
+	body, err := mc.do(ctx, req)
 	if err != nil {
 		return 0, err
 	}
-	defer resp.Body.Close()
-	return parseUptime(resp.Body)
+	return parseUptime(bytes.NewReader(body))
 }
 
 func parseUptime(r io.Reader) (int64, error) {
@@ -36,9 +35,20 @@ func parseUptime(r io.Reader) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	submatch := uptimePattern.FindStringSubmatch(dm.Sys)
-	if len(submatch) != 2 {
+	fields := strings.Split(dm.Sys, "(")
+	if len(fields) != 2 {
 		return 0, fmt.Errorf("invalid uptime info, [%s]", dm.Sys)
 	}
-	return strconv.ParseInt(submatch[1], 10, 64)
+
+	routerNow, err := time.Parse(time.RFC1123Z, strings.TrimPrefix(fields[0], "uptimeStr="))
+	if err != nil {
+		return 0, fmt.Errorf("parse uptime now failed, [%s], %v", fields[0], err)
+	}
+
+	since, err := strconv.ParseInt(strings.Split(fields[1], " ")[0], 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("parse uptime since failed, [%s], %v", fields[1], err)
+	}
+
+	return routerNow.Add(time.Duration(since) * time.Second * -1).Unix(), nil
 }

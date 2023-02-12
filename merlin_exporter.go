@@ -8,7 +8,10 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
 	"strconv"
+	"syscall"
 	"time"
 )
 
@@ -54,7 +57,7 @@ func main() {
 		EnableOpenMetrics: true,
 	}))
 
-	go client.Loop(time.Second*5, func(info *merlin_client.Info) {
+	go client.Loop(time.Second, func(info *merlin_client.Info) {
 		bootTimeGauge.Set(float64(info.Uptime.Unix()))
 		for key, value := range info.Temperature {
 			temperatureGauge.WithLabelValues(key).Set(value)
@@ -82,7 +85,20 @@ func main() {
 		Handler: mux,
 		Addr:    ":9100",
 	}
-	log.Printf("Merlin router exporter listened on :9100")
+	log.Printf("Merlin router exporter listened on 0.0.0.0:9100")
 
-	log.Fatalln(svc.ListenAndServe())
+	go func() {
+		log.Fatalln(svc.ListenAndServe())
+	}()
+
+	sig := make(chan os.Signal, 1)
+
+	signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
+
+	log.Printf("receive [%s] signal, try to logout to clear session\n", <-sig)
+	if err := client.Logout(); err != nil {
+		log.Fatalf("logout failed, %v\n", err)
+	}
+	log.Println("logout successful")
+
 }

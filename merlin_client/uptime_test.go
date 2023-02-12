@@ -87,7 +87,7 @@ func TestMerlinClient_parseUptime(t *testing.T) {
 		t.Fatalf("parse uptime failed, %v", err)
 	}
 
-	if uptime != 15411660 {
-		t.Fatalf("parse uptime value failed")
+	if uptime != 1675951517 {
+		t.Fatalf("parse uptime value failed, %v", uptime)
 	}
 }

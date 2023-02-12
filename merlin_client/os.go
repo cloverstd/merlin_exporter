@@ -1,6 +1,7 @@
 package merlin_client
 
 import (
+	"bytes"
 	"context"
 	"encoding/xml"
 	"io"
@@ -35,10 +36,9 @@ func (mc *MerlinClient) OSInfo(ctx context.Context) (*OSInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	resp, err := mc.do(ctx, req)
+	body, err := mc.do(ctx, req)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-	return parseOSInfo(resp.Body)
+	return parseOSInfo(bytes.NewReader(body))
 }

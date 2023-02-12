@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/http/cookiejar"
@@ -12,6 +13,10 @@ import (
 	"strings"
 	"time"
 )
+
+type ctxkey interface{}
+
+var redoCtxKey ctxkey = "__redo"
 
 type Info struct {
 	Uptime      time.Time
@@ -60,8 +65,16 @@ func (mc *MerlinClient) Login(ctx context.Context) error {
 		return err
 	}
 	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("http call failed, %d", resp.StatusCode)
+		return fmt.Errorf("http call failed, %d, %s", resp.StatusCode, string(body))
+	}
+
+	if bytes.Contains(body, []byte(".location.href='/Main_Login.asp'")) {
+		return fmt.Errorf("login failed")
 	}
 	return nil
 }
@@ -70,30 +83,67 @@ func (mc *MerlinClient) renderURL(path string) string {
 	return fmt.Sprintf("http://%s/%s", mc.host, strings.TrimPrefix(path, "/"))
 }
 
-func (mc *MerlinClient) do(ctx context.Context, req *http.Request) (*http.Response, error) {
+func (mc *MerlinClient) Logout() error {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, mc.renderURL("Logout.asp"), nil)
+	if err != nil {
+		return err
+	}
+	resp, err := mc.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	// TODO: clear the cookie in jar
+	return nil
+}
+
+func (mc *MerlinClient) do(ctx context.Context, req *http.Request) ([]byte, error) {
+	n, _ := req.Context().Value(redoCtxKey).(int)
+
+	if n > 5 {
+		return nil, fmt.Errorf("session expired")
+	}
+
 	resp, err := mc.client.Do(req)
 	if err != nil {
 		return nil, err
 	}
+	var bodyHold bytes.Buffer
+
+	req.Body = io.NopCloser(io.TeeReader(req.Body, &bodyHold))
+
 	if resp.StatusCode != http.StatusOK {
 		defer resp.Body.Close()
 		return nil, fmt.Errorf("http call failed with http code %d", resp.StatusCode)
 	}
-	return resp, nil
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if bytes.Contains(body, []byte(".location.href='/Main_Login.asp'")) {
+		// login
+		if err := mc.Login(ctx); err != nil {
+			return nil, err
+		}
+		// retry
+		req.Body = io.NopCloser(&bodyHold)
+		return mc.do(ctx, req.WithContext(context.WithValue(req.Context(), redoCtxKey, n+1)))
+	}
+	return body, nil
 }
 
 func (mc *MerlinClient) collect() (*Info, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
 	defer cancel()
-	if err := mc.Login(ctx); err != nil {
-		return nil, err
-	}
 	var info Info
 	uptime, err := mc.Uptime(ctx)
 	if err != nil {
 		return nil, err
 	}
-	info.Uptime = time.Now().Add(time.Duration(uptime) * time.Second)
+	info.Uptime = time.Unix(uptime, 0)
 
 	temperature, err := mc.Temperature(ctx)
 	if err != nil {

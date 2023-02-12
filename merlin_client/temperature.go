@@ -2,6 +2,7 @@ package merlin_client
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"io"
 	"net/http"
@@ -14,12 +15,11 @@ func (mc *MerlinClient) Temperature(ctx context.Context) (map[string]float64, er
 	if err != nil {
 		return nil, err
 	}
-	resp, err := mc.do(ctx, req)
+	body, err := mc.do(ctx, req)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-	return parseTemperature(resp.Body)
+	return parseTemperature(bytes.NewReader(body))
 }
 
 func parseTemperature(body io.Reader) (map[string]float64, error) {
